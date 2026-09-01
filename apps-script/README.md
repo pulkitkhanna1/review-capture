@@ -1,104 +1,67 @@
-# Review Capture — Google Apps Script
+# Google Apps Script setup
 
-**No Render. No SendGrid. No localhost.**
+**One file only** — no separate HTML files (fixes "unable to open file at present").
 
-Everything runs in Google Apps Script. Emails send from **`pulkitkhanna1@gmail.com`** via Gmail.
+## Fix steps
 
----
+### 1. Replace ALL code in Apps Script
 
-## Setup (~15 minutes)
+1. [script.google.com](https://script.google.com) → open your project
+2. **Delete** `Dashboard.html` and `SignResult.html` if you created them
+3. Open **`Code.gs`** → select all → delete
+4. Paste **entire** contents of `Code.gs` from this folder
+5. Confirm `WEB_APP_URL` at the top matches your deployment URL
+6. **Save** (Ctrl+S)
 
-### 1. Create the script
+### 2. Authorize (required before deploy)
 
-1. Go to [script.google.com](https://script.google.com)
-2. **New project** → name it `Review Capture`
-3. Delete the default `Code.gs` content
-4. Create these files ( **+** → Script / HTML):
+1. Select function **`testSetup`** in the dropdown
+2. Click **▶ Run**
+3. **Review permissions** → choose `pulkitkhanna1@gmail.com`
+4. Advanced → **Go to Review Capture (unsafe)** → **Allow**
+5. Check Gmail for "Review Capture setup OK"
 
-| File in Apps Script | Copy from repo |
-|---------------------|----------------|
-| `Code.gs` | `apps-script/Code.gs` |
-| `Dashboard.html` | `apps-script/Dashboard.html` |
-| `SignResult.html` | `apps-script/SignResult.html` |
+### 3. Redeploy
 
-### 2. Edit clients (optional)
+1. **Deploy** → **Manage deployments**
+2. Click **✏️ Edit** (pencil) on active deployment
+3. **Version:** New version
+4. Execute as: **Me**
+5. Who has access: **Anyone**
+6. **Deploy**
+7. Copy the `/exec` URL — update `WEB_APP_URL` in Code.gs if it changed
+8. Save + **Deploy new version** again if URL changed
 
-In `Code.gs`, update the `CLIENTS` array at the top — or copy from `config/clients.json`.
+### 4. Open the URL
 
-Confirm `PM_EMAIL = "pulkitkhanna1@gmail.com"`.
-
-### 3. Authorize Gmail
-
-1. Select function **`doGet`** in the toolbar → **Run**
-2. Click **Review permissions** → choose **`pulkitkhanna1@gmail.com`**
-3. Advanced → **Go to Review Capture (unsafe)** → **Allow**
-
-This grants `GmailApp.sendEmail` permission.
-
-### 4. Deploy as web app
-
-1. **Deploy** → **New deployment**
-2. Type: **Web app**
-3. **Execute as:** Me (`pulkitkhanna1@gmail.com`)
-4. **Who has access:** Anyone
-5. **Deploy** → copy the URL
-
-Bookmark that URL — it's your dashboard.
+- Use Chrome logged in as **pulkitkhanna1@gmail.com**
+- URL must end in **`/exec`** not `/dev`
+- First load may take 5–10 seconds (cold start)
 
 ---
 
-## Daily use
+## "Unable to open file at present"
 
-1. Open your web app URL (logged into Google as `pulkitkhanna1@gmail.com`)
-2. Click **Yes — send review email** on a client
-3. Client gets email from your Gmail with sign button
-4. You're BCC'd on every client email
-5. When they sign, you get a notification email
-
----
-
-## Sign links
-
-Sign links use the same web app URL:
-
-```
-https://script.google.com/macros/s/XXXX/exec?action=sign&sessionId=...
-```
-
-No ngrok, no Render, no DNS.
-
----
-
-## Limits
-
-| Limit | Value |
-|-------|--------|
-| Gmail sends/day (personal) | ~100 recipients |
-| Cost | Free |
-| Mac required | ❌ No |
-| Render required | ❌ No |
-
-Fine for dozens of client reviews per month.
-
----
-
-## Troubleshooting
-
-| Issue | Fix |
+| Cause | Fix |
 |-------|-----|
-| "Sign in with pulkitkhanna1@gmail.com" | Open dashboard in Chrome logged into that Google account |
-| Permission denied on send | Re-run `doGet`, re-authorize Gmail scope |
-| Client didn't get email | Check spam; Gmail → Sent folder |
-| After editing code | **Deploy → Manage deployments → Edit → New version → Deploy** |
+| Missing HTML files | Use **one-file** `Code.gs` only (this version) |
+| Never ran authorization | Run **`testSetup`** first |
+| Wrong URL (`/dev`) | Use production URL ending in **`/exec`** |
+| Old deployment | Deploy **new version** |
+| Not signed into Google | Sign in as `pulkitkhanna1@gmail.com` |
 
 ---
 
-## Updating clients
+## Check errors
 
-Edit `CLIENTS` in `Code.gs` → save → **Deploy new version** (step above).
+Apps Script → **Executions** (left sidebar) → see failed `doGet` runs and error message.
 
 ---
 
-## Old Node / Render code
+## Your URL
 
-The `src/` folder is the previous Node + Render app. **You can ignore it.** This Apps Script project replaces it entirely.
+```
+https://script.google.com/macros/s/AKfycby8VED2MXMkTYqVKkx87rayGxzgbAfK8scmRblpIzdN4NZCc2zx8CCbJjWUn6K994MY/exec
+```
+
+Already set in `WEB_APP_URL` at top of `Code.gs`.
