@@ -14,9 +14,9 @@ You (dashboard) → Yes → 📧 ONE email to client (draft + sign button)
 
 | Setup | Guide |
 |-------|--------|
+| **Pocket FM domain (`@pocketfm.com`)** | [POCKETFM_SETUP.md](./POCKETFM_SETUP.md) ← **start here** |
 | **Local Mac + Gmail** | [LOCAL_SETUP.md](./LOCAL_SETUP.md) |
-| **Railway + Resend** (recommended cloud) | [RAILWAY_SETUP.md](./RAILWAY_SETUP.md) |
-| **Render + SendGrid** | [RENDER_EMAIL_SETUP.md](./RENDER_EMAIL_SETUP.md) |
+| **Railway + Resend (generic)** | [RAILWAY_SETUP.md](./RAILWAY_SETUP.md) |
 
 Cloud hosts **cannot use Gmail SMTP**. You need **Resend or SendGrid + a domain you own**.
 
