@@ -17,12 +17,10 @@ Render → **review-capture** → **Environment**:
 | `PM_EMAIL` | Your inbox for BCC + sign alerts (e.g. `pulkitkhanna1@gmail.com`) |
 | `NODE_ENV` | `production` |
 
-### Remove if present
+### Delete these on Render (they cause the gmail.com error)
 
-- `SMTP_*` — not used
-- `RESEND_API_KEY` — not used
-- `EMAIL_FROM` with `@gmail.com` — use `SENDGRID_FROM` instead
-- `PH_EMAIL` — rename to `PM_EMAIL`
+- `EMAIL_FROM` — **delete entirely** if it says `@gmail.com`
+- `SMTP_*`, `RESEND_API_KEY`
 
 Save → **Manual Deploy**.
 

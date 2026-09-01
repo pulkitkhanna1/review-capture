@@ -41,8 +41,12 @@ function baseUrl() {
 }
 
 function parseFromAddress() {
-  const raw = stripQuotes(process.env.SENDGRID_FROM || process.env.EMAIL_FROM || "");
-  if (!raw) throw new Error("Set SENDGRID_FROM on Render — e.g. Yukta <yukta@revops.shop>");
+  const raw = stripQuotes(process.env.SENDGRID_FROM || "");
+  if (!raw) {
+    throw new Error(
+      "Set SENDGRID_FROM on Render — e.g. Yukta <yukta@revops.shop> (remove old EMAIL_FROM with @gmail.com)"
+    );
+  }
   const match = raw.match(/^(.+?)\s*<([^>]+)>$/);
   if (match) return { name: match[1].trim(), email: match[2].trim() };
   return { email: raw, name: "Review Capture" };
