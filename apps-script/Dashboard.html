@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 24px;
+        color: #1a1a1a;
+        background: #f8f8f8;
+      }
+      h1 { font-size: 1.5rem; margin: 0 0 8px; }
+      h2 { font-size: 1.1rem; margin: 32px 0 12px; color: #611f69; }
+      .card {
+        background: #fff;
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+      .client-name { font-weight: 600; font-size: 1.05rem; }
+      .meta { color: #616061; font-size: 0.9rem; margin-top: 4px; }
+      .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      .btn {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        font-size: 0.9rem;
+        border: none;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .btn-yes { background: #2eb67d; color: #fff; }
+      .btn-no { background: #e8e8e8; color: #1a1a1a; }
+      .btn-primary { background: #611f69; color: #fff; }
+      .btn-secondary { background: #e8e8e8; color: #1a1a1a; }
+      blockquote {
+        border-left: 4px solid #611f69;
+        padding-left: 16px;
+        margin: 12px 0;
+        font-style: italic;
+        color: #333;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        background: #ede7f0;
+        color: #611f69;
+      }
+      .alert {
+        padding: 12px 16px;
+        border-radius: 6px;
+        margin-bottom: 16px;
+        background: #e8f5e9;
+        color: #2e7d32;
+      }
+      .warn { background: #fff3e0; color: #e65100; }
+      form.inline { display: inline; }
+      textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-family: inherit;
+        margin-top: 8px;
+      }
+      .skip-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+    </style>
+  </head>
+  <body>
+    <? if (flash === 'sent') { ?>
+      <div class="alert">✅ Email sent via Gmail (BCC: <?= pmEmail ?>)</div>
+    <? } else if (flash === 'resent') { ?>
+      <div class="alert">✅ Email resent</div>
+    <? } else if (flash === 'test') { ?>
+      <div class="alert">✅ Test email sent to <?= pmEmail ?></div>
+    <? } else if (flash === 'cancelled') { ?>
+      <div class="alert">Session cancelled</div>
+    <? } else if (flash === 'skipped') { ?>
+      <div class="alert">Skipped — reason saved</div>
+    <? } ?>
+    <? if (error) { ?>
+      <div class="alert warn">❌ <?= error ?></div>
+    <? } ?>
+
+    <div class="alert">
+      📧 Gmail · <?= pmEmail ?> ·
+      <form class="inline" method="post" action="<?= webAppUrl ?>">
+        <input type="hidden" name="action" value="test" />
+        <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:.8rem">🧪 Test email</button>
+      </form>
+    </div>
+
+    <h1>📋 Reviews to be taken</h1>
+    <p class="meta">Yes → one Gmail to client with draft + sign button. You get notified when they sign.</p>
+
+    <? clients.forEach(function(c) {
+         var active = null;
+         for (var sid in state.sessions) {
+           var s = state.sessions[sid];
+           if (s.clientId === c.id && (s.status === 'awaiting_signature' || s.status === 'generating' || s.status === 'failed')) {
+             active = s;
+             break;
+           }
+         }
+    ?>
+    <div class="card">
+      <div class="client-name">
+        <?= c.name ?>
+        <? if (active) { ?><span class="badge"><?= active.status.replace(/_/g, ' ') ?></span><? } ?>
+      </div>
+      <div class="meta"><?= c.contactName ?> · <?= c.email ?></div>
+      <div class="meta"><?= c.projectSummary.substring(0, 100) ?>…</div>
+
+      <? if (active) { ?>
+        <? if (active.status === 'failed') { ?>
+          <p class="meta warn">❌ <?= active.error || 'Failed' ?></p>
+        <? } else if (active.emailSentAt) { ?>
+          <p class="meta">Sent <?= active.emailSentAt ?> → <?= active.sentTo || c.email ?></p>
+          <? if (active.draftText) { ?><blockquote><?= active.draftText ?></blockquote><? } ?>
+        <? } else { ?>
+          <p class="meta">⏳ Sending…</p>
+        <? } ?>
+        <div class="actions">
+          <a href="<?= webAppUrl ?>?action=sign&sessionId=<?= active.id ?>" class="btn btn-primary">✍️ Open sign link</a>
+          <form class="inline" method="post" action="<?= webAppUrl ?>">
+            <input type="hidden" name="action" value="resend" />
+            <input type="hidden" name="sessionId" value="<?= active.id ?>" />
+            <button type="submit" class="btn btn-secondary">📧 Resend</button>
+          </form>
+          <form class="inline" method="post" action="<?= webAppUrl ?>">
+            <input type="hidden" name="action" value="cancel" />
+            <input type="hidden" name="sessionId" value="<?= active.id ?>" />
+            <button type="submit" class="btn btn-no">✕ Cancel</button>
+          </form>
+        </div>
+      <? } else { ?>
+        <div class="actions">
+          <form class="inline" method="post" action="<?= webAppUrl ?>">
+            <input type="hidden" name="action" value="request" />
+            <input type="hidden" name="clientId" value="<?= c.id ?>" />
+            <button type="submit" class="btn btn-yes">✅ Yes — send review email</button>
+          </form>
+          <button type="button" class="btn btn-no" onclick="document.getElementById('skip-<?= c.id ?>').style.display='block'">❌ No — skip</button>
+        </div>
+        <div id="skip-<?= c.id ?>" class="skip-form" style="display:none">
+          <form method="post" action="<?= webAppUrl ?>">
+            <input type="hidden" name="action" value="skip" />
+            <input type="hidden" name="clientId" value="<?= c.id ?>" />
+            <label>Understand why?</label>
+            <textarea name="reason" rows="2" required></textarea>
+            <div class="actions"><button type="submit" class="btn btn-no">Save & skip</button></div>
+          </form>
+        </div>
+      <? } ?>
+    </div>
+    <? }); ?>
+
+    <h2>Signed</h2>
+    <? var hasSigned = false;
+       for (var sid in state.sessions) {
+         var s = state.sessions[sid];
+         if (s.status !== 'signed') continue;
+         hasSigned = true;
+         var cl = null;
+         for (var i = 0; i < clients.length; i++) {
+           if (clients[i].id === s.clientId) { cl = clients[i]; break; }
+         }
+    ?>
+    <div class="card">
+      <div class="client-name">✅ <?= cl ? cl.name : s.clientId ?></div>
+      <blockquote><?= s.draftText ?></blockquote>
+      <div class="meta">Signed <?= s.signedAt ?></div>
+    </div>
+    <? }
+       if (!hasSigned) { ?>
+      <p class="meta">No signed reviews yet.</p>
+    <? } ?>
+  </body>
+</html>

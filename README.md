@@ -1,34 +1,32 @@
 # Review Capture
 
-Client review requests via email — **Render + SendGrid only**.
+Client review requests sent from **Gmail** via **Google Apps Script**.
 
-**Dashboard:** https://review-capture.onrender.com
+No Render · No SendGrid · No localhost · Mac can be off
+
+## Quick start
+
+1. Open [script.google.com](https://script.google.com) → New project
+2. Copy files from **`apps-script/`** into the project
+3. Deploy as **Web app** (Execute as: Me, Access: Anyone)
+4. Open the URL → click **Yes** on a client
+
+**Full setup:** [apps-script/README.md](./apps-script/README.md)
 
 ## Flow
 
 ```
-Dashboard → Yes → SendGrid email to client (draft + sign button)
-                        → Client signs → PM notified
-         → No  → log reason
-```
-
-## Setup
-
-All configuration is on **Render** — see **[RENDER_SETUP.md](./RENDER_SETUP.md)**
-
-Required env vars:
-
-```
-SENDGRID_API_KEY=SG.xxxx
-SENDGRID_FROM=Yukta <yukta@revops.shop>
-PM_EMAIL=you@example.com
+Dashboard (Apps Script) → Yes → Gmail to client (draft + sign link)
+                                    → Client signs → Gmail notifies you
 ```
 
 ## Files
 
-| File | Purpose |
+| Path | Purpose |
 |------|---------|
-| `src/server.js` | Dashboard + sign links |
-| `src/email.js` | SendGrid sending |
-| `config/clients.json` | Client list |
-| `render.yaml` | Render deploy config |
+| `apps-script/Code.gs` | Main logic + Gmail sending |
+| `apps-script/Dashboard.html` | Client dashboard UI |
+| `apps-script/SignResult.html` | Client sign confirmation |
+| `config/clients.json` | Reference — copy into `Code.gs` |
+
+Legacy Node/Render code is in `src/` (not needed).
