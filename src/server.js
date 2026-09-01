@@ -143,8 +143,8 @@ function renderDashboard(query = {}) {
 
   const emailStatus = (() => {
     const provider = emailProvider();
-    if (provider.includes("blocked")) {
-      return `<div class="alert warn">⚠️ Gmail SMTP blocked on Render. Add <strong>SENDGRID_API_KEY</strong> in Render env vars. See RENDER_EMAIL_SETUP.md</div>`;
+    if (provider.includes("none") || provider.includes("needs")) {
+      return `<div class="alert warn">⚠️ Cloud host needs <strong>RESEND_API_KEY</strong> + domain. See RAILWAY_SETUP.md</div>`;
     }
     if (!isEmailConfigured()) {
       return `<div class="alert warn">⚠️ Set SENDGRID_API_KEY (Render) or SMTP_* (local) to send emails</div>`;
@@ -251,6 +251,9 @@ app.listen(port, async () => {
   console.log(`   Dashboard: http://localhost:${port}`);
   console.log(`   Flow: Yes → 1 email to client (BCC: ${pmEmail()}) → you notified on sign`);
   console.log(`   Public URL: ${baseUrl()}`);
+  if (!process.env.RENDER_EXTERNAL_URL && !process.env.APP_URL) {
+    console.log(`   ℹ Sign links use localhost — for real clients, set APP_URL to ngrok (see LOCAL_SETUP.md)`);
+  }
 
   const check = await verifyEmailConfig();
   if (check.ok) {

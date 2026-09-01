@@ -1,16 +1,44 @@
 import nodemailer from "nodemailer";
 import sgMail from "@sendgrid/mail";
+import { Resend } from "resend";
 
 const VERIFY_TIMEOUT_MS = 10_000;
 const SEND_TIMEOUT_MS = 20_000;
 
-function isRender() {
-  return Boolean(process.env.RENDER_EXTERNAL_URL);
+const BLOCKED_FROM_DOMAINS = [
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "aol.com",
+  "hotmail.com",
+  "outlook.com",
+  "live.com",
+];
+
+function stripQuotes(s) {
+  return (s || "").replace(/^["']|["']$/g, "").trim();
+}
+
+function isCloudHost() {
+  return Boolean(
+    process.env.RENDER_EXTERNAL_URL ||
+      process.env.RAILWAY_PUBLIC_DOMAIN ||
+      process.env.RAILWAY_ENVIRONMENT
+  );
+}
+
+function useResend() {
+  const key = process.env.RESEND_API_KEY;
+  return Boolean(key && key.startsWith("re_"));
 }
 
 function useSendGrid() {
   const key = process.env.SENDGRID_API_KEY;
   return Boolean(key && key.startsWith("SG."));
+}
+
+function useCloudEmailApi() {
+  return useResend() || useSendGrid();
 }
 
 function getTransporter() {
@@ -39,10 +67,13 @@ function withTimeout(promise, ms, label) {
 }
 
 function baseUrl() {
-  const isProd = process.env.NODE_ENV === "production" || isRender();
+  const isProd = process.env.NODE_ENV === "production" || isCloudHost();
 
   const candidates = [
     process.env.APP_URL,
+    process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : null,
     process.env.RENDER_EXTERNAL_URL,
     process.env.PUBLIC_BASE_URL,
   ]
@@ -57,25 +88,16 @@ function baseUrl() {
   return `http://localhost:${process.env.PORT || process.env.HTTP_PORT || 3000}`;
 }
 
-function stripQuotes(s) {
-  return (s || "").replace(/^["']|["']$/g, "").trim();
-}
-
 function parseFromAddress() {
   const raw = stripQuotes(
-    process.env.SENDGRID_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER
+    process.env.RESEND_FROM ||
+      process.env.SENDGRID_FROM ||
+      process.env.EMAIL_FROM ||
+      process.env.SMTP_USER
   );
   const match = raw.match(/^(.+?)\s*<([^>]+)>$/);
   if (match) return { name: match[1].trim(), email: match[2].trim() };
   return { email: raw, name: "Review Capture" };
-}
-
-function formatSendGridError(err) {
-  const errors = err?.response?.body?.errors;
-  if (Array.isArray(errors) && errors.length) {
-    return errors.map((e) => e.message).join("; ");
-  }
-  return err.message || "SendGrid error";
 }
 
 function fromAddress() {
@@ -87,39 +109,41 @@ function pmEmail() {
   return process.env.PM_EMAIL || process.env.SMTP_USER;
 }
 
-const BLOCKED_SENDGRID_FROM_DOMAINS = [
-  "gmail.com",
-  "googlemail.com",
-  "yahoo.com",
-  "aol.com",
-  "hotmail.com",
-  "outlook.com",
-  "live.com",
-];
-
-function isBlockedSendGridFrom(email) {
+function isBlockedCloudFrom(email) {
   const domain = stripQuotes(email).split("@")[1]?.toLowerCase();
-  return BLOCKED_SENDGRID_FROM_DOMAINS.includes(domain);
+  return BLOCKED_FROM_DOMAINS.includes(domain);
 }
 
-function sendGridFromBlockedMessage(fromEmail) {
+function blockedFromMessage(fromEmail) {
   return (
-    `SendGrid accepted the send, but mail FROM ${fromEmail} is silently blocked by Gmail/Yahoo (DMARC). ` +
-    `You cannot send as @gmail.com through SendGrid. Use a domain you own: ` +
-    `authenticate it in SendGrid → set SENDGRID_FROM=reviews@yourdomain.com. ` +
-    `Replies still go to PM_EMAIL. See RENDER_EMAIL_SETUP.md`
+    `Cannot send FROM ${fromEmail} via a cloud email service — Gmail/Yahoo block it (DMARC). ` +
+    `Use a domain you own: e.g. RESEND_FROM=reviews@yourdomain.com. ` +
+    `Replies go to PM_EMAIL (${pmEmail()}). See RAILWAY_SETUP.md`
   );
 }
 
+function cloudEmailRequiredMessage() {
+  return (
+    "Gmail SMTP does not work on cloud hosts (Render, Railway, etc.). " +
+    "Add RESEND_API_KEY + RESEND_FROM with a domain you own. See RAILWAY_SETUP.md"
+  );
+}
+
+function formatSendGridError(err) {
+  const errors = err?.response?.body?.errors;
+  if (Array.isArray(errors) && errors.length) {
+    return errors.map((e) => e.message).join("; ");
+  }
+  return err.message || "SendGrid error";
+}
+
 function assertCanSend() {
-  if (useSendGrid()) return;
-  if (isRender()) {
-    throw new Error(
-      "Gmail SMTP is blocked on Render. Add SENDGRID_API_KEY — see RENDER_EMAIL_SETUP.md"
-    );
+  if (useCloudEmailApi()) return;
+  if (isCloudHost()) {
+    throw new Error(cloudEmailRequiredMessage());
   }
   if (!getTransporter()) {
-    throw new Error("Email not configured — set SENDGRID_API_KEY or SMTP_* in .env");
+    throw new Error("Email not configured — set RESEND_API_KEY (cloud) or SMTP_* (local)");
   }
 }
 
@@ -144,17 +168,48 @@ function reviewAndSignEmailHtml(client, reviewText, sessionId) {
 </html>`;
 }
 
-async function sendViaSendGrid({ to, subject, html, text, bccSender = false }) {
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+async function sendViaResend({ to, subject, html, text, bccSender = false }) {
   const from = parseFromAddress();
-
-  if (isBlockedSendGridFrom(from.email)) {
-    throw new Error(sendGridFromBlockedMessage(from.email));
+  if (isBlockedCloudFrom(from.email)) {
+    throw new Error(blockedFromMessage(from.email));
   }
 
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const bcc = bccSender ? stripQuotes(pmEmail()) : undefined;
+  const payload = {
+    from: fromAddress(),
+    to,
+    replyTo: pmEmail(),
+    subject,
+    html,
+    text,
+  };
+  if (bcc && bcc.toLowerCase() !== stripQuotes(to).toLowerCase()) {
+    payload.bcc = bcc;
+  }
+
+  const { data, error } = await withTimeout(
+    resend.emails.send(payload),
+    SEND_TIMEOUT_MS,
+    "Email send"
+  );
+
+  if (error) throw new Error(error.message);
+  console.log(
+    `Email sent (Resend) → to: ${to}${payload.bcc ? `, bcc: ${payload.bcc}` : ""}, from: ${from.email}, id: ${data.id}`
+  );
+  return { messageId: data.id };
+}
+
+async function sendViaSendGrid({ to, subject, html, text, bccSender = false }) {
+  const from = parseFromAddress();
+  if (isBlockedCloudFrom(from.email)) {
+    throw new Error(blockedFromMessage(from.email));
+  }
+
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
   const msg = { from, to, replyTo: pmEmail(), subject, html, text };
 
-  // SendGrid rejects duplicate addresses across to/cc/bcc
   const bcc = bccSender ? stripQuotes(pmEmail()) : null;
   if (bcc && bcc.toLowerCase() !== stripQuotes(to).toLowerCase()) {
     msg.bcc = bcc;
@@ -174,20 +229,26 @@ async function sendViaSendGrid({ to, subject, html, text, bccSender = false }) {
 
 async function sendViaSmtp({ to, subject, html, text, bccSender = false }) {
   const transporter = getTransporter();
-  if (!transporter) throw new Error("Email not configured — set SENDGRID_API_KEY or SMTP_* in .env");
+  if (!transporter) throw new Error("Email not configured");
 
   const mail = { from: fromAddress(), to, replyTo: pmEmail(), subject, html, text };
-  if (bccSender) mail.bcc = pmEmail();
+  if (bccSender) {
+    const bcc = stripQuotes(pmEmail());
+    if (bcc.toLowerCase() !== stripQuotes(to).toLowerCase()) {
+      mail.bcc = bcc;
+    }
+  }
 
   const info = await withTimeout(transporter.sendMail(mail), SEND_TIMEOUT_MS, "Email send");
   console.log(
-    `Email sent (SMTP) → to: ${to}${bccSender ? `, bcc: ${pmEmail()}` : ""}, messageId: ${info.messageId}`
+    `Email sent (Gmail SMTP) → to: ${to}${mail.bcc ? `, bcc: ${mail.bcc}` : ""}, id: ${info.messageId}`
   );
   return info;
 }
 
 async function sendMail(opts) {
   assertCanSend();
+  if (useResend()) return sendViaResend(opts);
   if (useSendGrid()) return sendViaSendGrid(opts);
   return sendViaSmtp(opts);
 }
@@ -215,62 +276,61 @@ export async function sendPmSigned(client, reviewText) {
   });
 }
 
+export async function sendTestEmail() {
+  return sendMail({
+    to: pmEmail(),
+    bccSender: false,
+    subject: "Review Capture — test email",
+    html: `<p>Test email from Review Capture.</p><p>Time: ${new Date().toISOString()}</p>`,
+    text: `Review Capture test — ${new Date().toISOString()}`,
+  });
+}
+
 export async function verifyEmailConfig() {
-  if (useSendGrid()) {
-    const from = parseFromAddress();
-    if (isBlockedSendGridFrom(from.email)) {
+  const from = parseFromAddress();
+
+  if (useResend() || useSendGrid()) {
+    if (isBlockedCloudFrom(from.email)) {
       return {
         ok: false,
-        provider: "sendgrid",
+        provider: useResend() ? "resend" : "sendgrid",
         from: fromAddress(),
         fromEmail: from.email,
-        error: sendGridFromBlockedMessage(from.email),
+        error: blockedFromMessage(from.email),
       };
     }
-    return { ok: true, provider: "sendgrid", from: fromAddress(), fromEmail: from.email };
-  }
-
-  if (isRender()) {
     return {
-      ok: false,
-      provider: "smtp",
-      error: "Gmail SMTP blocked on Render — add SENDGRID_API_KEY (see RENDER_EMAIL_SETUP.md)",
+      ok: true,
+      provider: useResend() ? "resend" : "sendgrid",
+      from: fromAddress(),
+      fromEmail: from.email,
     };
   }
 
+  if (isCloudHost()) {
+    return { ok: false, provider: "none", error: cloudEmailRequiredMessage() };
+  }
+
   const transporter = getTransporter();
-  if (!transporter) return { ok: false, error: "SMTP not configured", provider: "none" };
+  if (!transporter) return { ok: false, error: "Email not configured", provider: "none" };
   try {
     await withTimeout(transporter.verify(), VERIFY_TIMEOUT_MS, "SMTP verify");
-    return { ok: true, provider: "smtp", user: process.env.SMTP_USER };
+    return { ok: true, provider: "gmail smtp", user: process.env.SMTP_USER };
   } catch (err) {
-    return { ok: false, error: err.message, provider: "smtp" };
+    return { ok: false, error: err.message, provider: "gmail smtp" };
   }
 }
 
 export function isEmailConfigured() {
-  return useSendGrid() || Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return useCloudEmailApi() || Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
 export function emailProvider() {
+  if (useResend()) return "resend";
   if (useSendGrid()) return "sendgrid";
-  if (isRender()) return "gmail smtp (blocked on Render)";
-  if (isEmailConfigured()) return "gmail smtp";
+  if (isCloudHost() && !useCloudEmailApi()) return "none (cloud needs Resend/SendGrid)";
+  if (isEmailConfigured()) return "gmail smtp (local only)";
   return "none";
-}
-
-/** Send a test email to PM inbox — use to verify SendGrid delivery on Render */
-export async function sendTestEmail() {
-  const to = pmEmail();
-  return sendMail({
-    to,
-    bccSender: false,
-    subject: "Review Capture — test email",
-    html: `<p>If you received this, SendGrid is working on Render.</p>
-<p>Time: ${new Date().toISOString()}</p>
-<p>From: ${parseFromAddress().email}</p>`,
-    text: `Review Capture test email — ${new Date().toISOString()}`,
-  });
 }
 
 export { baseUrl, pmEmail };
