@@ -28,17 +28,16 @@ export async function initiateReviewRequest(clientRecord, session) {
   const { isEmailConfigured } = await import("./email.js");
 
   if (!isEmailConfigured()) {
-    throw new Error("Email not configured — set SMTP_* in .env");
+    throw new Error("Email not configured — set SENDGRID_API_KEY on Render");
   }
   if (!clientRecord.email) {
     throw new Error(`No email for ${clientRecord.name}`);
   }
 
-  updateSession(session.id, { status: "sending" }, { name: "sending" });
+  updateSession(session.id, { status: "generating" }, { name: "generating" });
 
   try {
     const draftText = await generateDraft(clientRecord);
-    console.log(`Draft ready for ${clientRecord.name}, sending email…`);
     const info = await sendReviewAndSignEmail(clientRecord, session.id, draftText);
 
     updateSession(

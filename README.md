@@ -1,38 +1,34 @@
-# Review Capture — Email Only
+# Review Capture
 
-Capture client reviews entirely over email. No Slack required.
+Client review requests via email — **Render + SendGrid only**.
+
+**Dashboard:** https://review-capture.onrender.com
 
 ## Flow
 
 ```
-You (dashboard) → Yes → 📧 ONE email to client (draft + sign button)
-                              → Client signs → 📧 You get notified
+Dashboard → Yes → SendGrid email to client (draft + sign button)
+                        → Client signs → PM notified
          → No  → log reason
 ```
 
-## Where to run
+## Setup
 
-| Setup | Guide |
-|-------|--------|
-| **Pocket FM domain (`@pocketfm.com`)** | [POCKETFM_SETUP.md](./POCKETFM_SETUP.md) ← **start here** |
-| **Local Mac + Gmail** | [LOCAL_SETUP.md](./LOCAL_SETUP.md) |
-| **Railway + Resend (generic)** | [RAILWAY_SETUP.md](./RAILWAY_SETUP.md) |
+All configuration is on **Render** — see **[RENDER_SETUP.md](./RENDER_SETUP.md)**
 
-Cloud hosts **cannot use Gmail SMTP**. You need **Resend or SendGrid + a domain you own**.
+Required env vars:
+
+```
+SENDGRID_API_KEY=SG.xxxx
+SENDGRID_FROM=Yukta <yukta@revops.shop>
+PM_EMAIL=you@example.com
+```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `src/server.js` | Dashboard + sign link handlers |
-| `src/flows.js` | Review state machine |
-| `src/email.js` | Email sending (Gmail or SendGrid) |
-| `config/clients.json` | Client roster + project context |
-| `data/reviews/` | Signed reviews (JSON) |
-
-## What emails get sent
-
-| When | To | What |
-|------|-----|------|
-| You click Yes | Client | **One email** — testimonial draft + Sign button |
-| Client signs | You | Confirmation with full signed text |
+| `src/server.js` | Dashboard + sign links |
+| `src/email.js` | SendGrid sending |
+| `config/clients.json` | Client list |
+| `render.yaml` | Render deploy config |

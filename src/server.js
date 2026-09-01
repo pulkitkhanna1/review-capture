@@ -143,11 +143,8 @@ function renderDashboard(query = {}) {
 
   const emailStatus = (() => {
     const provider = emailProvider();
-    if (provider.includes("none") || provider.includes("needs")) {
-      return `<div class="alert warn">⚠️ Cloud host needs <strong>RESEND_API_KEY</strong> + domain. See RAILWAY_SETUP.md</div>`;
-    }
     if (!isEmailConfigured()) {
-      return `<div class="alert warn">⚠️ Set SENDGRID_API_KEY (Render) or SMTP_* (local) to send emails</div>`;
+      return `<div class="alert warn">⚠️ Set <strong>SENDGRID_API_KEY</strong> and <strong>SENDGRID_FROM</strong> on Render. See RENDER_SETUP.md</div>`;
     }
     return `<div class="alert">📧 ${provider} · BCC ${pmEmail()} · sign links → ${baseUrl()}
     <form class="inline" method="POST" action="/admin/test-email" style="margin-left:8px">
@@ -251,8 +248,8 @@ app.listen(port, async () => {
   console.log(`   Dashboard: http://localhost:${port}`);
   console.log(`   Flow: Yes → 1 email to client (BCC: ${pmEmail()}) → you notified on sign`);
   console.log(`   Public URL: ${baseUrl()}`);
-  if (!process.env.RENDER_EXTERNAL_URL && !process.env.APP_URL) {
-    console.log(`   ℹ Sign links use localhost — for real clients, set APP_URL to ngrok (see LOCAL_SETUP.md)`);
+  if (!process.env.RENDER_EXTERNAL_URL) {
+    console.log(`   ℹ Running locally — set SENDGRID_* env vars to test email (production: Render only)`);
   }
 
   const check = await verifyEmailConfig();
