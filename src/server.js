@@ -10,7 +10,7 @@ import {
   resendReviewEmail,
 } from "./flows.js";
 import { createSession, logDecline, getSession, listDeclined, cancelSession, getActiveSessionForClient } from "./store.js";
-import { isEmailConfigured, baseUrl, verifyEmailConfig, pmEmail, emailProvider } from "./email.js";
+import { isEmailConfigured, baseUrl, verifyEmailConfig, pmEmail, emailProvider, sendTestEmail } from "./email.js";
 
 const port = Number(process.env.PORT || process.env.HTTP_PORT || 3000);
 const app = express();
@@ -65,7 +65,7 @@ function activeSessionActions(session) {
     : "";
 
   const emailNote = session.emailSentAt
-    ? `Email sent ${new Date(session.emailSentAt).toLocaleString()} to <strong>${session.sentTo || "client"}</strong> (you're BCC'd at ${pmEmail()})`
+    ? `SendGrid accepted ${new Date(session.emailSentAt).toLocaleString()} → <strong>${session.sentTo || "client"}</strong>${session.lastMessageId ? ` (id: ${session.lastMessageId})` : ""}. Check spam + <a href="https://app.sendgrid.com/email_activity" target="_blank">SendGrid Activity</a>.`
     : `Processing…`;
 
   return `<p class="meta" style="margin-top:8px">${emailNote}</p>
@@ -91,6 +91,8 @@ function renderDashboard(query = {}) {
     flash = `<div class="alert">✅ Email resent to client (BCC: ${pmEmail()}).</div>`;
   } else if (query.already === "1") {
     flash = `<div class="alert warn">⚠️ This client already has a review in progress. Cancel it first or use Resend.</div>`;
+  } else if (query.test === "1") {
+    flash = `<div class="alert">✅ Test email sent to ${pmEmail()} (id: ${query.id || "ok"}). Check inbox + spam. Also check <a href="https://app.sendgrid.com/email_activity" target="_blank">SendGrid Activity</a>.</div>`;
   } else if (query.error) {
     flash = `<div class="alert warn">❌ ${decodeURIComponent(query.error)}</div>`;
   }
@@ -147,7 +149,10 @@ function renderDashboard(query = {}) {
     if (!isEmailConfigured()) {
       return `<div class="alert warn">⚠️ Set SENDGRID_API_KEY (Render) or SMTP_* (local) to send emails</div>`;
     }
-    return `<div class="alert">📧 ${provider} · BCC ${pmEmail()} · sign links → ${baseUrl()}</div>`;
+    return `<div class="alert">📧 ${provider} · BCC ${pmEmail()} · sign links → ${baseUrl()}
+    <form class="inline" method="POST" action="/admin/test-email" style="margin-left:8px">
+      <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:.8rem">🧪 Send test email to me</button>
+    </form></div>`;
   })();
 
   return page(
@@ -201,6 +206,15 @@ app.get("/admin/regenerate/:sessionId", async (req, res) => {
     res.redirect("/?regenerated=1");
   } catch (err) {
     res.status(500).send(page("Error", `<div class="card warn">${err.message}</div><p><a href="/">← Back</a></p>`));
+  }
+});
+
+app.post("/admin/test-email", async (_req, res) => {
+  try {
+    const info = await sendTestEmail();
+    res.redirect(`/?test=1&id=${encodeURIComponent(info.messageId || "ok")}`);
+  } catch (err) {
+    res.redirect(`/?error=${encodeURIComponent(err.message)}`);
   }
 });
 

@@ -1,92 +1,97 @@
-# Fix "Connection timeout" on Render
+# Email on Render — setup guide
 
-Gmail SMTP **does not work** from Render (and most cloud hosts). You'll see:
+## Why SendGrid logs "sent" but nobody receives the email
+
+If you see this in Render logs:
 
 ```
-❌ Failed: Connection timeout
+Email sent (SendGrid) → to: Yukta.Kandhari@gmail.com, from: pulkitkhanna1@gmail.com
 ```
 
-Use **SendGrid** instead — free tier, works from Render, sends to any client email.
+…but **no email arrives** (not even in spam), this is expected with a **@gmail.com From address**.
+
+| What happens | Detail |
+|--------------|--------|
+| SendGrid API | ✅ Accepts the send (202) |
+| Gmail inbox | ❌ **Silently rejects** the message |
+
+**Why:** Gmail's DMARC policy blocks mail that claims to be from `@gmail.com` but was sent by SendGrid's servers. You don't control gmail.com DNS, so SendGrid can't authenticate as Gmail. [SendGrid documents this](https://support.sendgrid.com/hc/en-us/articles/360041356934).
+
+**Single Sender Verification does NOT fix this** — it only lets SendGrid accept the API call. Gmail still drops the message.
+
+Check SendGrid → **Email Activity** — you'll likely see **Blocked** with a DMARC reason.
 
 ---
 
-## Setup (10 minutes)
+## Fix: use a domain you own
 
-### 1. Create a SendGrid account
+You need **Domain Authentication** in SendGrid (not Single Sender with Gmail).
 
-1. Go to [sendgrid.com](https://sendgrid.com) → Sign up (free)
-2. Complete email verification
+### 1. Pick a domain
 
-### 2. Verify your sender email
+Any domain you control works — e.g. `yourcompany.com`, a project domain, etc.
 
-SendGrid needs to confirm you own the Gmail address you send from.
+### 2. Authenticate in SendGrid
 
-1. SendGrid dashboard → **Settings** → **Sender Authentication**
-2. Click **Verify a Single Sender**
-3. Fill in:
-   - **From Name:** Pulkit
-   - **From Email:** `pulkitkhanna1@gmail.com` (must match `EMAIL_FROM` in Render)
-   - **Reply To:** same email
-4. SendGrid sends a verification link → **click it in your inbox**
+1. SendGrid → **Settings** → **Sender Authentication** → **Authenticate Your Domain**
+2. Enter your domain → SendGrid gives you **3 CNAME records**
+3. Add those CNAMEs in your domain's DNS (GoDaddy, Cloudflare, Namecheap, etc.)
+4. Wait for verification (usually 5–30 min)
 
-Wait until status shows **Verified**.
-
-### 3. Create an API key
-
-1. **Settings** → **API Keys** → **Create API Key**
-2. Name: `review-capture`
-3. Permission: **Restricted** → Mail Send → **Full Access**
-4. Copy the key (starts with `SG.`) — shown only once
-
-### 4. Add to Render
-
-Render dashboard → **review-capture** → **Environment**:
+### 3. Update Render env vars
 
 | Key | Value |
 |-----|-------|
-| `SENDGRID_API_KEY` | `SG.xxxxxxxx...` |
-| `EMAIL_FROM` | `Pulkit <pulkitkhanna1@gmail.com>` |
+| `SENDGRID_API_KEY` | `SG.xxxxx...` |
+| `SENDGRID_FROM` | `Pulkit <reviews@yourdomain.com>` |
 | `PM_EMAIL` | `pulkitkhanna1@gmail.com` |
 
-Keep your Gmail vars if you want — SendGrid takes priority when `SENDGRID_API_KEY` is set.
+`PM_EMAIL` becomes **Reply-To** — clients reply to your Gmail.
 
-**Fix typo if present:** rename `PH_EMAIL` → `PM_EMAIL`.
+Remove or ignore `EMAIL_FROM` if it still says `@gmail.com`.
 
-### 5. Redeploy
+### 4. Redeploy and test
 
-Render → **Manual Deploy** → Deploy latest commit.
-
-### 6. Test
-
-1. Open https://review-capture.onrender.com/health  
-   Should show: `"provider": "sendgrid"`
-2. Cancel any failed sessions on the dashboard
-3. Click **Yes — send review email** on **Hive Sphere** first (real client email, not your own)
-4. Check inbox + spam
-
-### Common errors
-
-| Error | Fix |
-|-------|-----|
-| `Bad Request` | **Sender not verified** — finish Single Sender verification in SendGrid for `pulkitkhanna1@gmail.com` |
-| `does not match a verified Sender Identity` | `EMAIL_FROM` must exactly match your verified sender email |
-| Duplicate address in to/bcc | Fixed in code — when client email = your email, BCC is skipped automatically |
-
-**Tip:** Test with **Hive Sphere** (`Yukta.Kandhari@gmail.com`), not Bright Path/Northstar — those use your Gmail as the client email for testing.
+Cancel old sessions → click **Yes** again → check inbox.
 
 ---
 
-## Local vs Render
+## Option B — no domain yet? Use localhost
 
-| Where you run | Email method |
-|---------------|--------------|
-| **localhost** (`npm start`) | Gmail SMTP works fine |
-| **Render** (hosted URL) | Use SendGrid — Gmail SMTP times out |
+Gmail SMTP **works on your Mac** (not on Render):
+
+```bash
+npm start
+# open http://localhost:3000
+```
+
+Set in `.env`:
+
+```bash
+APP_URL=https://review-capture.onrender.com   # sign links still use Render URL
+SMTP_USER=pulkitkhanna1@gmail.com
+SMTP_PASS=your-app-password
+```
+
+Run the dashboard locally; emails send via real Gmail.
 
 ---
 
-## Alternative: Resend
+## Option C — manual workaround (right now)
 
-If you prefer [Resend](https://resend.com), add `RESEND_API_KEY` on Render instead.
+The app **does work** — only email delivery is broken on Render with @gmail.com From.
 
-Note: Resend's test sender (`onboarding@resend.dev`) only delivers to your own email. To email clients, you need a **verified domain**. SendGrid Single Sender is easier if you only have Gmail.
+1. On Render dashboard, click **✍️ Open sign link**
+2. Copy the testimonial draft from the page
+3. Paste into a normal Gmail email to the client with the sign link
+
+---
+
+## Quick reference
+
+| Setup | Works on Render? | Delivers to Gmail inboxes? |
+|-------|------------------|----------------------------|
+| Gmail SMTP | ❌ Connection timeout | — |
+| SendGrid + `@gmail.com` From | API ✅ / Inbox ❌ | ❌ DMARC blocked |
+| SendGrid + **your domain** From | ✅ | ✅ |
+| Localhost + Gmail SMTP | ✅ (on your Mac) | ✅ |

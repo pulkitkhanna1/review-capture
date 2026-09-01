@@ -87,6 +87,30 @@ function pmEmail() {
   return process.env.PM_EMAIL || process.env.SMTP_USER;
 }
 
+const BLOCKED_SENDGRID_FROM_DOMAINS = [
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "aol.com",
+  "hotmail.com",
+  "outlook.com",
+  "live.com",
+];
+
+function isBlockedSendGridFrom(email) {
+  const domain = stripQuotes(email).split("@")[1]?.toLowerCase();
+  return BLOCKED_SENDGRID_FROM_DOMAINS.includes(domain);
+}
+
+function sendGridFromBlockedMessage(fromEmail) {
+  return (
+    `SendGrid accepted the send, but mail FROM ${fromEmail} is silently blocked by Gmail/Yahoo (DMARC). ` +
+    `You cannot send as @gmail.com through SendGrid. Use a domain you own: ` +
+    `authenticate it in SendGrid → set SENDGRID_FROM=reviews@yourdomain.com. ` +
+    `Replies still go to PM_EMAIL. See RENDER_EMAIL_SETUP.md`
+  );
+}
+
 function assertCanSend() {
   if (useSendGrid()) return;
   if (isRender()) {
@@ -123,6 +147,11 @@ function reviewAndSignEmailHtml(client, reviewText, sessionId) {
 async function sendViaSendGrid({ to, subject, html, text, bccSender = false }) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
   const from = parseFromAddress();
+
+  if (isBlockedSendGridFrom(from.email)) {
+    throw new Error(sendGridFromBlockedMessage(from.email));
+  }
+
   const msg = { from, to, replyTo: pmEmail(), subject, html, text };
 
   // SendGrid rejects duplicate addresses across to/cc/bcc
@@ -132,15 +161,15 @@ async function sendViaSendGrid({ to, subject, html, text, bccSender = false }) {
   }
 
   try {
-    await withTimeout(sgMail.send(msg), SEND_TIMEOUT_MS, "Email send");
+    const [response] = await withTimeout(sgMail.send(msg), SEND_TIMEOUT_MS, "Email send");
+    const messageId = response?.headers?.["x-message-id"] || "sendgrid";
+    console.log(
+      `Email sent (SendGrid) → to: ${to}${msg.bcc ? `, bcc: ${msg.bcc}` : ""}, from: ${from.email}, id: ${messageId}`
+    );
+    return { messageId };
   } catch (err) {
     throw new Error(formatSendGridError(err));
   }
-
-  console.log(
-    `Email sent (SendGrid) → to: ${to}${msg.bcc ? `, bcc: ${msg.bcc}` : ""}, from: ${from.email}`
-  );
-  return { messageId: "sendgrid" };
 }
 
 async function sendViaSmtp({ to, subject, html, text, bccSender = false }) {
@@ -189,6 +218,15 @@ export async function sendPmSigned(client, reviewText) {
 export async function verifyEmailConfig() {
   if (useSendGrid()) {
     const from = parseFromAddress();
+    if (isBlockedSendGridFrom(from.email)) {
+      return {
+        ok: false,
+        provider: "sendgrid",
+        from: fromAddress(),
+        fromEmail: from.email,
+        error: sendGridFromBlockedMessage(from.email),
+      };
+    }
     return { ok: true, provider: "sendgrid", from: fromAddress(), fromEmail: from.email };
   }
 
@@ -219,6 +257,20 @@ export function emailProvider() {
   if (isRender()) return "gmail smtp (blocked on Render)";
   if (isEmailConfigured()) return "gmail smtp";
   return "none";
+}
+
+/** Send a test email to PM inbox — use to verify SendGrid delivery on Render */
+export async function sendTestEmail() {
+  const to = pmEmail();
+  return sendMail({
+    to,
+    bccSender: false,
+    subject: "Review Capture — test email",
+    html: `<p>If you received this, SendGrid is working on Render.</p>
+<p>Time: ${new Date().toISOString()}</p>
+<p>From: ${parseFromAddress().email}</p>`,
+    text: `Review Capture test email — ${new Date().toISOString()}`,
+  });
 }
 
 export { baseUrl, pmEmail };
