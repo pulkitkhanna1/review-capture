@@ -57,8 +57,30 @@ function baseUrl() {
   return `http://localhost:${process.env.PORT || process.env.HTTP_PORT || 3000}`;
 }
 
+function stripQuotes(s) {
+  return (s || "").replace(/^["']|["']$/g, "").trim();
+}
+
+function parseFromAddress() {
+  const raw = stripQuotes(
+    process.env.SENDGRID_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER
+  );
+  const match = raw.match(/^(.+?)\s*<([^>]+)>$/);
+  if (match) return { name: match[1].trim(), email: match[2].trim() };
+  return { email: raw, name: "Review Capture" };
+}
+
+function formatSendGridError(err) {
+  const errors = err?.response?.body?.errors;
+  if (Array.isArray(errors) && errors.length) {
+    return errors.map((e) => e.message).join("; ");
+  }
+  return err.message || "SendGrid error";
+}
+
 function fromAddress() {
-  return process.env.EMAIL_FROM || process.env.SMTP_USER;
+  const { name, email } = parseFromAddress();
+  return name ? `${name} <${email}>` : email;
 }
 
 function pmEmail() {
@@ -100,11 +122,24 @@ function reviewAndSignEmailHtml(client, reviewText, sessionId) {
 
 async function sendViaSendGrid({ to, subject, html, text, bccSender = false }) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-  const msg = { from: fromAddress(), to, replyTo: pmEmail(), subject, html, text };
-  if (bccSender) msg.bcc = pmEmail();
+  const from = parseFromAddress();
+  const msg = { from, to, replyTo: pmEmail(), subject, html, text };
 
-  await withTimeout(sgMail.send(msg), SEND_TIMEOUT_MS, "Email send");
-  console.log(`Email sent (SendGrid) → to: ${to}${bccSender ? `, bcc: ${pmEmail()}` : ""}`);
+  // SendGrid rejects duplicate addresses across to/cc/bcc
+  const bcc = bccSender ? stripQuotes(pmEmail()) : null;
+  if (bcc && bcc.toLowerCase() !== stripQuotes(to).toLowerCase()) {
+    msg.bcc = bcc;
+  }
+
+  try {
+    await withTimeout(sgMail.send(msg), SEND_TIMEOUT_MS, "Email send");
+  } catch (err) {
+    throw new Error(formatSendGridError(err));
+  }
+
+  console.log(
+    `Email sent (SendGrid) → to: ${to}${msg.bcc ? `, bcc: ${msg.bcc}` : ""}, from: ${from.email}`
+  );
   return { messageId: "sendgrid" };
 }
 
@@ -153,7 +188,8 @@ export async function sendPmSigned(client, reviewText) {
 
 export async function verifyEmailConfig() {
   if (useSendGrid()) {
-    return { ok: true, provider: "sendgrid", from: fromAddress() };
+    const from = parseFromAddress();
+    return { ok: true, provider: "sendgrid", from: fromAddress(), fromEmail: from.email };
   }
 
   if (isRender()) {

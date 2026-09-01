@@ -58,10 +58,21 @@ Render → **Manual Deploy** → Deploy latest commit.
 
 ### 6. Test
 
-1. Open https://review-capture.onrender.com/health/smtp  
-   Should show: `"ok": true, "provider": "sendgrid"`
+1. Open https://review-capture.onrender.com/health  
+   Should show: `"provider": "sendgrid"`
 2. Cancel any failed sessions on the dashboard
-3. Click **Yes — send review email** again
+3. Click **Yes — send review email** on **Hive Sphere** first (real client email, not your own)
+4. Check inbox + spam
+
+### Common errors
+
+| Error | Fix |
+|-------|-----|
+| `Bad Request` | **Sender not verified** — finish Single Sender verification in SendGrid for `pulkitkhanna1@gmail.com` |
+| `does not match a verified Sender Identity` | `EMAIL_FROM` must exactly match your verified sender email |
+| Duplicate address in to/bcc | Fixed in code — when client email = your email, BCC is skipped automatically |
+
+**Tip:** Test with **Hive Sphere** (`Yukta.Kandhari@gmail.com`), not Bright Path/Northstar — those use your Gmail as the client email for testing.
 
 ---
 
