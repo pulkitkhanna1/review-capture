@@ -10,17 +10,15 @@ import {
   resendReviewEmail,
 } from "./flows.js";
 import { createSession, logDecline, getSession, listDeclined, cancelSession, getActiveSessionForClient } from "./store.js";
-import { isEmailConfigured, baseUrl, verifyEmailConfig, pmEmail } from "./email.js";
+import { isEmailConfigured, baseUrl, verifyEmailConfig, pmEmail, emailProvider } from "./email.js";
 
 const port = Number(process.env.PORT || process.env.HTTP_PORT || 3000);
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 
-function page(title, body, { refresh = false } = {}) {
-  const refreshMeta = refresh ? '<meta http-equiv="refresh" content="3">' : "";
+function page(title, body) {
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-${refreshMeta}
 <title>${title} — Review Capture</title>
 <style>
   *{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:720px;margin:0 auto;padding:24px;color:#1a1a1a;background:#f8f8f8}
@@ -52,8 +50,8 @@ function activeSessionActions(session) {
     <button type="submit" class="btn btn-no">✕ Cancel & start over</button>
   </form>`;
 
-  if (session.status === "sending" || session.status === "generating") {
-    return `<p class="meta" style="margin-top:8px">⏳ Sending email… (page refreshes automatically)</p>
+  if (session.status === "generating") {
+    return `<p class="meta" style="margin-top:8px">⏳ Generating review & sending email…</p>
     <div class="actions">${cancelBtn}</div>`;
   }
 
@@ -89,8 +87,6 @@ function renderDashboard(query = {}) {
   let flash = "";
   if (query.sent === "1") {
     flash = `<div class="alert">✅ Email sent! Check the client's inbox and your BCC copy at ${pmEmail()}.</div>`;
-  } else if (query.sending === "1") {
-    flash = `<div class="alert">⏳ Sending email… this page refreshes every 3 seconds.</div>`;
   } else if (query.resent === "1") {
     flash = `<div class="alert">✅ Email resent to client (BCC: ${pmEmail()}).</div>`;
   } else if (query.already === "1") {
@@ -143,14 +139,16 @@ function renderDashboard(query = {}) {
     })
     .join("");
 
-  const emailStatus = isEmailConfigured()
-    ? `<div class="alert">📧 Sender BCC enabled · ${pmEmail()} gets a copy of every client email · links use ${baseUrl()}</div>`
-    : `<div class="alert warn">⚠️ Set SMTP_* in .env to send emails</div>`;
-
-  const hasSending = clients.some((c) => {
-    const s = getActiveSessionForClient(c.id);
-    return s && (s.status === "sending" || s.status === "generating");
-  });
+  const emailStatus = (() => {
+    const provider = emailProvider();
+    if (provider.includes("blocked")) {
+      return `<div class="alert warn">⚠️ Gmail SMTP blocked on Render. Add <strong>SENDGRID_API_KEY</strong> in Render env vars. See RENDER_EMAIL_SETUP.md</div>`;
+    }
+    if (!isEmailConfigured()) {
+      return `<div class="alert warn">⚠️ Set SENDGRID_API_KEY (Render) or SMTP_* (local) to send emails</div>`;
+    }
+    return `<div class="alert">📧 ${provider} · BCC ${pmEmail()} · sign links → ${baseUrl()}</div>`;
+  })();
 
   return page(
     "Reviews",
@@ -159,15 +157,14 @@ function renderDashboard(query = {}) {
     <p class="meta">Click Yes → client gets <strong>one email</strong> with their testimonial draft + sign button. You get notified only when they sign.</p>
     ${clientCards}
     ${signed.length ? `<h2>Signed reviews</h2>${signedCards}` : ""}
-    ${declined.length ? `<h2>Skipped</h2>${declined.map((d) => `<div class="card meta">${d.clientId}: ${d.reason}</div>`).join("")}` : ""}`,
-    { refresh: query.sending === "1" || hasSending }
+    ${declined.length ? `<h2>Skipped</h2>${declined.map((d) => `<div class="card meta">${d.clientId}: ${d.reason}</div>`).join("")}` : ""}`
   );
 }
 
 app.get("/", (req, res) => res.send(renderDashboard(req.query)));
 app.get("/admin", (_req, res) => res.redirect("/"));
 
-app.post("/admin/request/:clientId", (req, res) => {
+app.post("/admin/request/:clientId", async (req, res) => {
   try {
     const clientRecord = getClientById(clients, req.params.clientId);
     if (!clientRecord) return res.status(404).send("Client not found");
@@ -176,13 +173,8 @@ app.post("/admin/request/:clientId", (req, res) => {
     if (existing) return res.redirect("/?already=1");
 
     const session = createSession(clientRecord.id, "pm");
-
-    // Respond immediately — send email in background (Render HTTP timeout fix)
-    res.redirect("/?sending=1");
-
-    initiateReviewRequest(clientRecord, session).catch((err) => {
-      console.error("Background send failed:", err.message);
-    });
+    await initiateReviewRequest(clientRecord, session);
+    res.redirect(`/?sent=1&to=${encodeURIComponent(clientRecord.email)}`);
   } catch (err) {
     console.error("Send review failed:", err);
     res.redirect(`/?error=${encodeURIComponent(err.message)}`);
@@ -235,7 +227,10 @@ app.get("/r/:sessionId/sign", async (req, res) => {
   }
 });
 
-app.get("/health", (_req, res) => res.json({ ok: true, email: isEmailConfigured() }));
+app.get("/health", async (_req, res) => {
+  const check = await verifyEmailConfig();
+  res.json({ ok: true, email: check.ok, provider: emailProvider(), ...check });
+});
 
 app.listen(port, async () => {
   console.log(`\n📧 Review Capture (email-only)`);
@@ -245,9 +240,9 @@ app.listen(port, async () => {
 
   const check = await verifyEmailConfig();
   if (check.ok) {
-    console.log(`   ✓ SMTP verified for ${check.user}`);
+    console.log(`   ✓ Email ready (${check.provider})${check.user ? ` — ${check.user}` : ""}`);
   } else {
-    console.warn(`   ⚠ SMTP check failed: ${check.error}`);
+    console.warn(`   ⚠ Email not ready: ${check.error}`);
   }
   console.log(`   Email sign links use: ${baseUrl()}\n`);
 });

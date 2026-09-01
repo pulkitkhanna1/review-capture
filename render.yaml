@@ -23,6 +23,8 @@ services:
         sync: false
       - key: PM_EMAIL
         sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: GOOGLE_FORM_URL

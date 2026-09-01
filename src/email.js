@@ -1,15 +1,28 @@
 import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 
+const VERIFY_TIMEOUT_MS = 10_000;
 const SEND_TIMEOUT_MS = 20_000;
+
+function isRender() {
+  return Boolean(process.env.RENDER_EXTERNAL_URL);
+}
+
+function useSendGrid() {
+  const key = process.env.SENDGRID_API_KEY;
+  return Boolean(key && key.startsWith("SG."));
+}
 
 function getTransporter() {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
   if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) return null;
+
+  const port = Number(SMTP_PORT || 587);
   return nodemailer.createTransport({
     host: SMTP_HOST,
-    port: Number(SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === "true",
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    port,
+    secure: process.env.SMTP_SECURE === "true" || port === 465,
+    auth: { user: SMTP_USER, pass: SMTP_PASS.replace(/\s/g, "") },
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
     socketTimeout: 15_000,
@@ -26,7 +39,7 @@ function withTimeout(promise, ms, label) {
 }
 
 function baseUrl() {
-  const isProd = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER_EXTERNAL_URL);
+  const isProd = process.env.NODE_ENV === "production" || isRender();
 
   const candidates = [
     process.env.APP_URL,
@@ -52,6 +65,18 @@ function pmEmail() {
   return process.env.PM_EMAIL || process.env.SMTP_USER;
 }
 
+function assertCanSend() {
+  if (useSendGrid()) return;
+  if (isRender()) {
+    throw new Error(
+      "Gmail SMTP is blocked on Render. Add SENDGRID_API_KEY — see RENDER_EMAIL_SETUP.md"
+    );
+  }
+  if (!getTransporter()) {
+    throw new Error("Email not configured — set SENDGRID_API_KEY or SMTP_* in .env");
+  }
+}
+
 function reviewAndSignEmailHtml(client, reviewText, sessionId) {
   const signUrl = `${baseUrl()}/r/${sessionId}/sign`;
 
@@ -73,32 +98,34 @@ function reviewAndSignEmailHtml(client, reviewText, sessionId) {
 </html>`;
 }
 
-async function sendMail({ to, subject, html, text, bccSender = false }) {
+async function sendViaSendGrid({ to, subject, html, text, bccSender = false }) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  const msg = { from: fromAddress(), to, replyTo: pmEmail(), subject, html, text };
+  if (bccSender) msg.bcc = pmEmail();
+
+  await withTimeout(sgMail.send(msg), SEND_TIMEOUT_MS, "Email send");
+  console.log(`Email sent (SendGrid) → to: ${to}${bccSender ? `, bcc: ${pmEmail()}` : ""}`);
+  return { messageId: "sendgrid" };
+}
+
+async function sendViaSmtp({ to, subject, html, text, bccSender = false }) {
   const transporter = getTransporter();
-  if (!transporter) throw new Error("Email not configured — set SMTP_* in .env");
+  if (!transporter) throw new Error("Email not configured — set SENDGRID_API_KEY or SMTP_* in .env");
 
-  const mail = {
-    from: fromAddress(),
-    to,
-    replyTo: pmEmail(),
-    subject,
-    html,
-    text,
-  };
-  if (bccSender) {
-    mail.bcc = pmEmail();
-  }
+  const mail = { from: fromAddress(), to, replyTo: pmEmail(), subject, html, text };
+  if (bccSender) mail.bcc = pmEmail();
 
-  const info = await withTimeout(
-    transporter.sendMail(mail),
-    SEND_TIMEOUT_MS,
-    "Email send"
-  );
-
+  const info = await withTimeout(transporter.sendMail(mail), SEND_TIMEOUT_MS, "Email send");
   console.log(
-    `Email sent → to: ${to}${bccSender ? `, bcc: ${pmEmail()}` : ""}, messageId: ${info.messageId}`
+    `Email sent (SMTP) → to: ${to}${bccSender ? `, bcc: ${pmEmail()}` : ""}, messageId: ${info.messageId}`
   );
   return info;
+}
+
+async function sendMail(opts) {
+  assertCanSend();
+  if (useSendGrid()) return sendViaSendGrid(opts);
+  return sendViaSmtp(opts);
 }
 
 export async function sendReviewAndSignEmail(client, sessionId, reviewText) {
@@ -125,18 +152,37 @@ export async function sendPmSigned(client, reviewText) {
 }
 
 export async function verifyEmailConfig() {
+  if (useSendGrid()) {
+    return { ok: true, provider: "sendgrid", from: fromAddress() };
+  }
+
+  if (isRender()) {
+    return {
+      ok: false,
+      provider: "smtp",
+      error: "Gmail SMTP blocked on Render — add SENDGRID_API_KEY (see RENDER_EMAIL_SETUP.md)",
+    };
+  }
+
   const transporter = getTransporter();
-  if (!transporter) return { ok: false, error: "SMTP not configured" };
+  if (!transporter) return { ok: false, error: "SMTP not configured", provider: "none" };
   try {
-    await withTimeout(transporter.verify(), 10_000, "SMTP verify");
-    return { ok: true, user: process.env.SMTP_USER };
+    await withTimeout(transporter.verify(), VERIFY_TIMEOUT_MS, "SMTP verify");
+    return { ok: true, provider: "smtp", user: process.env.SMTP_USER };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: err.message, provider: "smtp" };
   }
 }
 
 export function isEmailConfigured() {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return useSendGrid() || Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
+export function emailProvider() {
+  if (useSendGrid()) return "sendgrid";
+  if (isRender()) return "gmail smtp (blocked on Render)";
+  if (isEmailConfigured()) return "gmail smtp";
+  return "none";
 }
 
 export { baseUrl, pmEmail };
